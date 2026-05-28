@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>WebGL Screen-Space Wide Line Tube</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#0d1117;overflow:hidden;font-family:'Segoe UI',system-ui,sans-serif}
+  canvas{display:block;width:100vw;height:100vh;cursor:grab}
+  canvas:active{cursor:grabbing}
+  #ui{position:fixed;top:16px;left:16px;z-index:10;background:rgba(13,17,23,0.88);border:1px solid #30363d;border-radius:12px;padding:16px 20px;color:#c9d1d9;backdrop-filter:blur(12px);min-width:230px}
+  #ui h2{font-size:14px;color:#58a6ff;margin-bottom:10px;letter-spacing:.5px}
+  #ui label{font-size:12px;display:block;margin-top:8px;color:#8b949e}
+  #ui select,#ui input[type=range]{width:100%;margin-top:4px;background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:4px 6px;font-size:12px}
+  #ui input[type=range]{-webkit-appearance:auto;padding:0}
+  #ui button{margin-top:10px;width:100%;padding:7px;border:none;border-radius:6px;background:#238636;color:#fff;font-size:12px;cursor:pointer;transition:background .2s}
+  #ui button:hover{background:#2ea043}
+  #ui button.accent{background:#8957e5}
+  #ui button.accent:hover{background:#a371f7}
+  .row{display:flex;justify-content:space-between;align-items:center}
+  .row span{font-size:12px;color:#58a6ff;min-width:36px;text-align:right}
+  .sep{border-top:1px solid #21262d;margin:10px 0 4px}
+  .tag{display:inline-block;font-size:10px;padding:2px 6px;border-radius:4px;margin-left:6px;vertical-align:middle}
+  .tag-ss{background:#1f6feb33;color:#58a6ff;border:1px solid #1f6feb55}
+  #annotPanel{position:fixed;top:0;right:0;width:540px;height:100vh;z-index:20;background:rgba(13,17,23,0.94);border-left:1px solid #30363d;backdrop-filter:blur(16px);overflow-y:auto;transform:translateX(100%);transition:transform .35s cubic-bezier(.4,0,.2,1);padding:24px 20px 40px}
+  #annotPanel.open{transform:translateX(0)}
+  #annotPanel h3{color:#58a6ff;font-size:15px;margin:20px 0 8px}
+  #annotPanel h3:first-child{margin-top:0}
+  #annotPanel p,#annotPanel li{color:#8b949e;font-size:12px;line-height:1.6}
+  #annotPanel ul{padding-left:18px;margin:4px 0 12px}
+  #annotPanel .mermaid{background:rgba(22,27,34,0.9);border:1px solid #30363d;border-radius:8px;padding:12px;margin:10px 0 16px;overflow-x:auto}
+  #annotPanel .mermaid svg{max-width:100%;height:auto}
+  .ptable{width:100%;border-collapse:collapse;margin:8px 0 16px;font-size:11px}
+  .ptable th{text-align:left;color:#58a6ff;padding:5px 8px;border-bottom:1px solid #30363d}
+  .ptable td{color:#c9d1d9;padding:5px 8px;border-bottom:1px solid #21262d}
+  .ptable td:first-child{color:#7ee787;font-family:monospace}
+  .code{font-family:monospace;color:#c9d1d9;background:#161b22;padding:10px;border-radius:6px;font-size:11px;line-height:1.8;margin:8px 0}
+  #closeAnnot{position:absolute;top:12px;right:14px;background:none;border:none;color:#8b949e;font-size:20px;cursor:pointer;width:auto;padding:4px}
+  #closeAnnot:hover{color:#c9d1d9}
+  #info{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);color:#484f58;font-size:11px}
+</style>
+</head>
+<body>
+
+<!-- ═══════════ LEFT PANEL ═══════════ -->
+<div id="ui">
+  <h2>🎛 Wide-Line Tube <span class="tag tag-ss">Screen-Space</span></h2>
+  <label>Spline Type</label>
+  <select id="splineType">
+    <option value="catmullrom" selected>Catmull-Rom</option>
+    <option value="bspline">Cubic B-Spline</option>
+    <option value="bezier">Cubic Bézier Chain</option>
+  </select>
+  <label>Preset Shape</label>
+  <select id="preset">
+    <option value="torusknot" selected>Torus Knot (3,2)</option>
+    <option value="torusknot54">Torus Knot (5,4)</option>
+    <option value="trefoil">Trefoil Knot</option>
+    <option value="helix">Double Helix</option>
+    <option value="lissajous">Lissajous 3D</option>
+    <option value="random">Random Points</option>
+  </select>
+  <label class="row">Control Points <span id="cpVal">24</span></label>
+  <input type="range" id="cpCount" min="6" max="64" value="24">
+  <label class="row">Pipe Width (px) <span id="pwVal">20</span></label>
+  <input type="range" id="pipeW" min="2" max="80" value="20">
+  <label class="row">Subdivisions <span id="subVal">8</span></label>
+  <input type="range" id="subdivs" min="2" max="32" value="8">
+  <div class="sep"></div>
+  <label><input type="checkbox" id="showWire"> Show Strip Wireframe</label>
+  <label><input type="checkbox" id="showCP" checked> Show Control Polygon</label>
+  <label><input type="checkbox" id="showPts" checked> Show Control Points</label>
+  <label><input type="checkbox" id="autoRot" checked> Auto Rotate</label>
+  <button id="regen">🔄 Randomize Points</button>
+  <div class="sep"></div>
+  <button class="accent" id="toggleAnnot">📐 Show Pipeline Diagram</button>
+</div>
+
+<!-- ═══════════ ANNOTATION PANEL ═══════════ -->
+<div id="annotPanel">
+  <button id="closeAnnot">✕</button>
+
+  <h3>📐 Screen-Space Wide Line Pipeline</h3>
+  <div class="mermaid">
+graph TD
+    CP["🔵 Control Points\n(Preset Generator)"] --> SE["Spline Evaluator\nCatmull-Rom | B-Spline | Bézier"]
+    SE --> CURVE["Dense Curve Points\n(N points)"]
+    CURVE --> WLD["Wide-Line Data Builder\npos, prev, next, side, t"]
+    WLD --> BUF["GPU Buffers\n2N vertices (left + right)"]
+    BUF --> SVAO["Solid VAO\ntriangle indices"]
+    BUF --> WVAO["Wire VAO\nline indices"]
+    SVAO --> VS1["Vertex Shader\nScreen-Space Expansion"]
+    WVAO --> VS2["Vertex Shader\nSame Expansion"]
+    VS1 --> FS1["Fragment Shader\nCylindrical Shading"]
+    VS2 --> FS2["Fragment Shader\nFlat Cyan"]
+    FS1 --> FB["Framebuffer\nComposite"]
+    FS2 --> FB
+
+    style CP fill:#1f6feb,stroke:#58a6ff,color:#fff
+    style SE fill:#8957e5,stroke:#a371f7,color:#fff
+    style CURVE fill:#238636,stroke:#7ee787,color:#fff
+    style WLD fill:#da3633,stroke:#f85149,color:#fff
+    style BUF fill:#b08800,stroke:#d29922,color:#fff
+    style SVAO fill:#b08800,stroke:#d29922,color:#fff
+    style WVAO fill:#0d8a8a,stroke:#2dd4bf,color:#fff
+    style VS1 fill:#6e40c9,stroke:#a371f7,color:#fff
+    style VS2 fill:#6e40c9,stroke:#a371f7,color:#fff
+    style FS1 fill:#da3633,stroke:#f85149,color:#fff
+    style FS2 fill:#0d8a8a,stroke:#2dd4bf,color:#fff
+    style FB fill:#238636,stroke:#7ee787,color:#fff
+  </div>
+
+  <h3>📏 Vertex Shader — Screen-Space Expansion</h3>
+  <div class="mermaid">
+graph TD
+    A["Project pos, prev, next\nto Clip Space"] --> B["Convert to NDC\n(÷ w)"]
+    B --> C["Aspect-correct\ndir.x × aspect"]
+    C --> D["Compute dir1 & dir2\n(screen tangent segments)"]
+    D --> E["Miter Tangent\nnormalize(dir1 + dir2)"]
+    E --> F["Perpendicular\nvec2(−tan.y, tan.x)"]
+    F --> G["Miter Length\n1 / dot(perp, normal₁)\nclamped to [0.35, 4.0]"]
+    G --> H["Offset = perp × side\n× width/resolution\n× miterLen"]
+    H --> I["gl_Position.xy\n+= offset × clip.w"]
+
+    style A fill:#6e40c9,stroke:#a371f7,color:#fff
+    style B fill:#6e40c9,stroke:#a371f7,color:#fff
+    style C fill:#1f6feb,stroke:#58a6ff,color:#fff
+    style D fill:#1f6feb,stroke:#58a6ff,color:#fff
+    style E fill:#238636,stroke:#7ee787,color:#fff
+    style F fill:#238636,stroke:#7ee787,color:#fff
+    style G fill:#b08800,stroke:#d29922,color:#fff
+    style H fill:#da3633,stroke:#f85149,color:#fff
+    style I fill:#da3633,stroke:#f85149,color:#fff
+  </div>
+
+  <h3>🌀 Fragment Shader — Virtual Cylinder Normal</h3>
+  <div class="mermaid">
+graph LR
+    T["T = normalize\n(view-space tangent)"] --> R["right = T × V\n(screen perp in 3D)"]
+    V["V = normalize\n(−viewPos)"] --> R
+    R --> U["up = right × T\n(depth direction)"]
+    SIDE["vSide ∈ [−1, 1]"] --> ANG["angle = side × π/2"]
+    ANG --> N["N = cos(θ)·right\n+ sin(θ)·up"]
+    R --> N
+    U --> N
+    N --> LIGHT["Blinn-Phong\nLighting"]
+
+    style T fill:#238636,stroke:#7ee787,color:#fff
+    style V fill:#238636,stroke:#7ee787,color:#fff
+    style R fill:#1f6feb,stroke:#58a6ff,color:#fff
+    style U fill:#1f6feb,stroke:#58a6ff,color:#fff
+    style SIDE fill:#b08800,stroke:#d29922,color:#fff
+    style ANG fill:#b08800,stroke:#d29922,color:#fff
+    style N fill:#da3633,stroke:#f85149,color:#fff
+    style LIGHT fill:#8957e5,stroke:#a371f7,color:#fff
+  </div>
+
+  <h3>💡 Lighting Model</h3>
+  <div class="mermaid">
+graph LR
+    N["Virtual Normal N"] --> D1["Diffuse 1\nmax(N·L1, 0) × 0.85"]
+    N --> D2["Diffuse 2\nmax(N·L2, 0) × 0.35"]
+    N --> S1["Specular 1\npow(N·H1, 80) × 0.6"]
+    N --> S2["Specular 2\npow(N·H2, 40) × 0.2"]
+    N --> RIM["Rim\nsmoothstep(0.3,1.0,\n1−N·V) × 0.4"]
+    BASE["HSL Base\nhue=f(vT)"] --> AMB["Ambient\n0.1 × base"]
+    BASE --> MIX["Color Mix"]
+    AMB --> MIX
+    D1 --> MIX
+    D2 --> MIX
+    S1 --> MIX
+    S2 --> MIX
+    RIM --> MIX
+    MIX --> TM["Reinhard\nc/(c+0.85)"]
+    TM --> GM["Gamma\npow(c,1/2.2)"]
+    GM --> OUT["fragColor"]
+
+    style N fill:#238636,stroke:#7ee787,color:#fff
+    style D1 fill:#b08800,stroke:#d29922,color:#fff
+    style D2 fill:#b08800,stroke:#d29922,color:#fff
+    style S1 fill:#da3633,stroke:#f85149,color:#fff
+    style S2 fill:#da3633,stroke:#f85149,color:#fff
+    style RIM fill:#1f6feb,stroke:#58a6ff,color:#fff
+    style BASE fill:#8957e5,stroke:#a371f7,color:#fff
+    style AMB fill:#6e40c9,stroke:#a371f7,color:#fff
+    style MIX fill:#0d8a8a,stroke:#2dd4bf,color:#fff
+    style TM fill:#6e40c9,stroke:#a371f7,color:#fff
+    style GM fill:#6e40c9,stroke:#a371f7,color:#fff
+    style OUT fill:#238636,stroke:#7ee787,color:#fff
+  </div>
+
+  <h3>🔲 Strip Wireframe Architecture</h3>
+  <div class="mermaid">
+graph TD
+    subgraph "Shared Wide-Line Vertex Buffers"
+        VTX["pos · prev · next · side · t\n(2 vertices per curve point)"]
+    end
+    subgraph "Pass 1 — Solid Strip"
+        TI["Triangle Index Buffer\n(i×2, i×2+1, i×2+2,\ni×2+1, i×2+3, i×2+2)"]
+        PO["gl.polygonOffset(1,1)"]
+        D1B["drawElements TRIANGLES"]
+        F1["Cylindrical FS\nvirtual normal → Blinn-Phong"]
+    end
+    subgraph "Pass 2 — Wireframe"
+        WI["Line Index Buffer"]
+        subgraph "Cross Edges"
+            CE["v(i,left) ↔ v(i,right)\nwidth indicators"]
+        end
+        subgraph "Longitudinal Edges"
+            LE["v(i,left) ↔ v(i+1,left)\nv(i,right) ↔ v(i+1,right)"]
+        end
+        D2B["drawElements LINES"]
+        F2["Flat FS\ncyan α=0.7"]
+    end
+    VTX --> TI --> PO --> D1B --> F1
+    VTX --> WI
+    CE --> WI
+    LE --> WI
+    WI --> D2B --> F2
+    F1 --> FB["Framebuffer"]
+    F2 --> FB
+
+    style VTX fill:#da3633,stroke:#f85149,color:#fff
+    style TI fill:#b08800,stroke:#d29922,color:#fff
+    style PO fill:#6e40c9,stroke:#a371f7,color:#fff
+    style D1B fill:#b08800,stroke:#d29922,color:#fff
+    style F1 fill:#b08800,stroke:#d29922,color:#fff
+    style WI fill:#0d8a8a,stroke:#2dd4bf,color:#fff
+    style CE fill:#1f6feb,stroke:#58a6ff,color:#fff
+    style LE fill:#1f6feb,stroke:#58a6ff,color:#fff
+    style D2B fill:#0d8a8a,stroke:#2dd4bf,color:#fff
+    style F2 fill:#0d8a8a,stroke:#2dd4bf,color:#fff
+    style FB fill:#238636,stroke:#7ee787,color:#fff
+  </div>
+
+  <h3>⚖️ Screen-Space vs Object-Space Comparison</h3>
+  <div class="mermaid">
+graph LR
+    subgraph "Object-Space Tube (Previous)"
+        OA["N × M vertices\n(rings × segments)"]
+        OB["Frenet frames\n+ circle stamps"]
+        OC["3D geometry\nshrinks with distance"]
+    end
+    subgraph "Screen-Space Wide Line (Current)"
+        SA["2N vertices only\n(left + right per point)"]
+        SB["Clip-space offset\n+ miter joins"]
+        SC["Constant pixel width\nshader-reconstructed normal"]
+    end
+    OA -.->|"replaced by"| SA
+    OB -.->|"replaced by"| SB
+    OC -.->|"replaced by"| SC
+
+    style OA fill:#6e40c9,stroke:#a371f7,color:#fff
+    style OB fill:#6e40c9,stroke:#a371f7,color:#fff
+    style OC fill:#6e40c9,stroke:#a371f7,color:#fff
+    style SA fill:#238636,stroke:#7ee787,color:#fff
+    style SB fill:#238636,stroke:#7ee787,color:#fff
+    style SC fill:#238636,stroke:#7ee787,color:#fff
+  </div>
+
+  <h3>🔦 Light & Shading Parameters</h3>
+  <table class="ptable">
+    <tr><th>Parameter</th><th>Value</th><th>Role</th></tr>
+    <tr><td>L1</td><td>normalize(3, 4, 2)</td><td>Key light — warm upper-right</td></tr>
+    <tr><td>L2</td><td>normalize(−2, −1, 3)</td><td>Fill light — cool lower-left</td></tr>
+    <tr><td>diff1 × 0.85</td><td>Lambertian</td><td>Primary diffuse contribution</td></tr>
+    <tr><td>diff2 × 0.35</td><td>Lambertian</td><td>Fill diffuse contribution</td></tr>
+    <tr><td>spec1 pow=80</td><td>Blinn-Phong</td><td>Tight key highlight (× 0.6)</td></tr>
+    <tr><td>spec2 pow=40</td><td>Blinn-Phong</td><td>Broader fill highlight (× 0.2)</td></tr>
+    <tr><td>ambient</td><td>0.10 × base</td><td>Shadow floor visibility</td></tr>
+    <tr><td>rim</td><td>smoothstep(0.3, 1.0)</td><td>Fresnel edge glow range</td></tr>
+    <tr><td>rim color</td><td>(0.35, 0.55, 1.0)</td><td>Cool blue edge tint × 0.4</td></tr>
+    <tr><td>tone map</td><td>c / (c + 0.85)</td><td>Reinhard, shoulder 0.85</td></tr>
+    <tr><td>gamma</td><td>pow(c, 1/2.2)</td><td>sRGB output correction</td></tr>
+  </table>
+
+  <h3>📊 Lighting Composition</h3>
+  <div class="code">
+    color = <span style="color:#a371f7">0.1 × base</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;+ <span style="color:#d29922">base × (diff₁×0.85 + diff₂×0.35)</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;+ <span style="color:#f85149">white × (spec₁×0.6 + spec₂×0.2)</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;+ <span style="color:#58a6ff">(0.35,0.55,1.0) × rim × 0.4</span><br><br>
+    <span style="color:#a371f7">color = color / (color + 0.85)</span> ← Reinhard<br>
+    <span style="color:#a371f7">color = pow(color, 1/2.2)</span>&nbsp;&nbsp;&nbsp; ← Gamma
+  </div>
+
+  <h3>🔑 Key Insight — Virtual Normal</h3>
+  <ul>
+    <li>The strip is <strong>flat in screen space</strong> — only 2 vertices per curve point</li>
+    <li>The <code>side</code> attribute (−1 left, +1 right) is interpolated across each fragment</li>
+    <li><strong>angle = side × π/2</strong> maps the strip width to the visible half-cylinder [−90°, +90°]</li>
+    <li>The reconstructed normal <code>N = cos(θ)·right + sin(θ)·up</code> gives each fragment a unique direction in the plane perpendicular to the curve tangent</li>
+    <li>Standard Blinn-Phong on this virtual normal produces convincing cylindrical shading</li>
+  </ul>
+
+  <h3>⚡ Z-Fighting Prevention</h3>
+  <ul>
+    <li><strong>Problem:</strong> Wireframe lines share exact depth with solid strip faces</li>
+    <li><strong>Solution:</strong> <code>gl.polygonOffset(1.0, 1.0)</code> on solid pass pushes triangles behind the wireframe lines</li>
+    <li>Disabled when wireframe is off for maximum depth precision</li>
+  </ul>
+</div>
+
+<div id="info">Drag to orbit · Scroll to zoom · Screen-Space Wide Line Tubes · WebGL 2.0</div>
+<canvas id="c"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+mermaid.initialize({startOnLoad:false,theme:'dark',
+  themeVariables:{darkMode:true,background:'#161b22',primaryColor:'#1f6feb',primaryTextColor:'#c9d1d9',lineColor:'#30363d',fontSize:'12px'},
+  flowchart:{curve:'basis',padding:12}});
+</script>
+
+<script>
+"use strict";
+
+// ── Panel toggle ──
+const annotPanel=document.getElementById('annotPanel');
+let panelOpen=false,mermaidDone=false;
+document.getElementById('toggleAnnot').addEventListener('click',async()=>{
+  panelOpen=!panelOpen;annotPanel.classList.toggle('open',panelOpen);
+  document.getElementById('toggleAnnot').textContent=panelOpen?'📐 Hide Pipeline Diagram':'📐 Show Pipeline Diagram';
+  if(panelOpen&&!mermaidDone){mermaidDone=true;await mermaid.run({nodes:document.querySelectorAll('#annotPanel .mermaid')});}
+});
+document.getElementById('closeAnnot').addEventListener('click',()=>{panelOpen=false;annotPanel.classList.remove('open');document.getElementById('toggleAnnot').textContent='📐 Show Pipeline Diagram';});
+
+// ══════════════════════════════════════════
+//  SPLINE MATH
+// ══════════════════════════════════════════
+function catmullRom(P0,P1,P2,P3,t){const t2=t*t,t3=t2*t,o=[0,0,0];for(let i=0;i<3;i++)o[i]=.5*((2*P1[i])+(-P0[i]+P2[i])*t+(2*P0[i]-5*P1[i]+4*P2[i]-P3[i])*t2+(-P0[i]+3*P1[i]-3*P2[i]+P3[i])*t3);return o;}
+function bspline(P0,P1,P2,P3,t){const t2=t*t,t3=t2*t,o=[0,0,0];for(let i=0;i<3;i++)o[i]=(1/6)*((1-3*t+3*t2-t3)*P0[i]+(4-6*t2+3*t3)*P1[i]+(1+3*t+3*t2-3*t3)*P2[i]+t3*P3[i]);return o;}
+function bezier(P0,P1,P2,P3,t){const u=1-t,u2=u*u,u3=u2*u,t2=t*t,t3=t2*t,o=[0,0,0];for(let i=0;i<3;i++)o[i]=u3*P0[i]+3*u2*t*P1[i]+3*u*t2*P2[i]+t3*P3[i];return o;}
+function evalSpline(cp,sub,type,closed){
+  const pts=cp.slice(),n=pts.length,res=[],fn=type==='bspline'?bspline:type==='bezier'?bezier:catmullRom;
+  if(type==='bezier'){for(let i=0;i+3<pts.length;i+=3)for(let j=0;j<=sub;j++){if(i>0&&j===0)continue;res.push(fn(pts[i],pts[i+1],pts[i+2],pts[i+3],j/sub));}return res;}
+  const lp=closed?[pts[n-1],...pts,pts[0],pts[1]]:[pts[0],...pts,pts[n-1]];
+  for(let i=0;i<lp.length-3;i++)for(let j=0;j<=sub;j++){if(i>0&&j===0)continue;res.push(fn(lp[i],lp[i+1],lp[i+2],lp[i+3],j/sub));}
+  return res;
+}
+
+// ══════════════════════════════════════════
+//  PRESETS
+// ══════════════════════════════════════════
+function genTK(n,p,q){const r=[];for(let i=0;i<n;i++){const t=(i/n)*Math.PI*2,d=.8+.35*Math.cos(q*t);r.push([d*Math.cos(p*t),.35*Math.sin(q*t),d*Math.sin(p*t)]);}return r;}
+function genTref(n){const r=[];for(let i=0;i<n;i++){const t=(i/n)*Math.PI*2;r.push([(Math.sin(t)+2*Math.sin(2*t))*.35,(Math.cos(t)-2*Math.cos(2*t))*.35,-Math.sin(3*t)*.35]);}return r;}
+function genHelix(n){const a=[],b=[];for(let i=0;i<n;i++){const t=(i/n)*Math.PI*6,y=(i/n)*2-1;a.push([.6*Math.cos(t),y,.6*Math.sin(t)]);b.push([.6*Math.cos(t+Math.PI),y,.6*Math.sin(t+Math.PI)]);}return[a,b];}
+function genLiss(n){const r=[];for(let i=0;i<n;i++){const t=(i/n)*Math.PI*2;r.push([.9*Math.sin(3*t+.2),.9*Math.sin(2*t+.7),.9*Math.sin(5*t)]);}return r;}
+function genRand(n){const r=[];for(let i=0;i<n;i++)r.push([(Math.random()-.5)*2,(Math.random()-.5)*2,(Math.random()-.5)*2]);return r;}
+
+// ══════════════════════════════════════════
+//  WIDE-LINE DATA BUILDER
+// ══════════════════════════════════════════
+function buildWideLine(points){
+  const N=points.length;
+  const pos=[],prev=[],next=[],side=[],tParam=[];
+  const triIdx=[],wireIdx=[];
+  for(let i=0;i<N;i++){
+    const c=points[i];
+    const p=i>0?points[i-1]:c;
+    const nx=i<N-1?points[i+1]:c;
+    const t=i/(N-1);
+    // Left vertex (side=-1)
+    pos.push(c[0],c[1],c[2]); prev.push(p[0],p[1],p[2]); next.push(nx[0],nx[1],nx[2]); side.push(-1); tParam.push(t);
+    // Right vertex (side=+1)
+    pos.push(c[0],c[1],c[2]); prev.push(p[0],p[1],p[2]); next.push(nx[0],nx[1],nx[2]); side.push(1); tParam.push(t);
+  }
+  // Triangles: 2 per segment
+  for(let i=0;i<N-1;i++){const a=i*2;triIdx.push(a,a+1,a+2,a+1,a+3,a+2);}
+  // Wireframe: cross + longitudinal edges
+  for(let i=0;i<N;i++) wireIdx.push(i*2,i*2+1);                           // cross
+  for(let i=0;i<N-1;i++){wireIdx.push(i*2,(i+1)*2);wireIdx.push(i*2+1,(i+1)*2+1);} // longitudinal
+  return{
+    pos:new Float32Array(pos),prev:new Float32Array(prev),next:new Float32Array(next),
+    side:new Float32Array(side),tParam:new Float32Array(tParam),
+    triIdx:new Uint32Array(triIdx),wireIdx:new Uint32Array(wireIdx)
+  };
+}
+
+// ══════════════════════════════════════════
+//  VECTOR / MATRIX MATH
+// ══════════════════════════════════════════
+function v3sub(a,b){return[a[0]-b[0],a[1]-b[1],a[2]-b[2]];}
+function v3cross(a,b){return[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];}
+function v3dot(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
+function v3len(a){return Math.sqrt(v3dot(a,a));}
+function v3norm(a){const l=v3len(a)||1;return[a[0]/l,a[1]/l,a[2]/l];}
+function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
+
+function mat4Persp(fov,asp,n,f){const g=1/Math.tan(fov/2),nf=1/(n-f);return new Float32Array([g/asp,0,0,0,0,g,0,0,0,0,(f+n)*nf,-1,0,0,2*f*n*nf,0]);}
+function mat4LookAt(e,c,u){const z=v3norm(v3sub(e,c)),x=v3norm(v3cross(u,z)),y=v3cross(z,x);return new Float32Array([x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-v3dot(x,e),-v3dot(y,e),-v3dot(z,e),1]);}
+function mat4Mul(a,b){const r=new Float32Array(16);for(let i=0;i<4;i++)for(let j=0;j<4;j++)r[j*4+i]=a[i]*b[j*4]+a[4+i]*b[j*4+1]+a[8+i]*b[j*4+2]+a[12+i]*b[j*4+3];return r;}
+function mat4Trans(x,y,z){return new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,x,y,z,1]);}
+function mat3Norm(m){const a00=m[0],a01=m[1],a02=m[2],a10=m[4],a11=m[5],a12=m[6],a20=m[8],a21=m[9],a22=m[10];let d=a00*(a11*a22-a12*a21)-a01*(a10*a22-a12*a20)+a02*(a10*a21-a11*a20);d=1/(d||1);return new Float32Array([(a11*a22-a12*a21)*d,(a02*a21-a01*a22)*d,(a01*a12-a02*a11)*d,(a12*a20-a10*a22)*d,(a00*a22-a02*a20)*d,(a02*a10-a00*a12)*d,(a10*a21-a11*a20)*d,(a01*a20-a00*a21)*d,(a00*a11-a01*a10)*d]);}
+
+// ══════════════════════════════════════════
+//  WEBGL SETUP
+// ══════════════════════════════════════════
+const canvas=document.getElementById('c');
+const gl=canvas.getContext('webgl2',{antialias:true});
+if(!gl)alert('WebGL2 required');
+function resize(){canvas.width=innerWidth*devicePixelRatio;canvas.height=innerHeight*devicePixelRatio;gl.viewport(0,0,canvas.width,canvas.height);}
+addEventListener('resize',resize);resize();
+
+// ─────────────────────────────────────────
+//  SHADERS
+// ─────────────────────────────────────────
+
+// Shared wide-line vertex shader
+const pipeVS=`#version 300 es
+precision highp float;
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aPrev;
+layout(location=2) in vec3 aNext;
+layout(location=3) in float aSide;
+layout(location=4) in float aT;
+
+uniform mat4 uMVP, uMV;
+uniform float uWidth;   // pixels
+uniform float uAspect;  // w/h
+uniform vec2 uRes;      // canvas w,h
+
+out vec3 vViewPos;
+out vec3 vTangent;
+out float vSide;
+out float vT;
+
+void main(){
+  vec4 cC = uMVP * vec4(aPos,  1.0);
+  vec4 cP = uMVP * vec4(aPrev, 1.0);
+  vec4 cN = uMVP * vec4(aNext, 1.0);
+
+  // NDC
+  vec2 nC = cC.xy / cC.w;
+  vec2 nP = cP.xy / cP.w;
+  vec2 nN = cN.xy / cN.w;
+
+  // Screen-space directions (aspect-corrected)
+  vec2 d1 = nC - nP;  d1.x *= uAspect;
+  vec2 d2 = nN - nC;  d2.x *= uAspect;
+
+  if(length(d1) < 1e-6) d1 = d2;
+  if(length(d2) < 1e-6) d2 = d1;
+  d1 = normalize(d1);
+  d2 = normalize(d2);
+
+  // Miter join
+  vec2 tang = normalize(d1 + d2);
+  vec2 perp = vec2(-tang.y, tang.x);
+  float miterDot = dot(perp, vec2(-d1.y, d1.x));
+  float miterLen = clamp(1.0 / max(abs(miterDot), 0.35), 0.0, 4.0);
+
+  // Offset in NDC
+  vec2 off = perp * aSide * (uWidth / uRes.y) * miterLen;
+  off.x /= uAspect;
+
+  gl_Position = cC;
+  gl_Position.xy += off * cC.w;
+
+  // View-space for fragment lighting
+  vViewPos = (uMV * vec4(aPos, 1.0)).xyz;
+  vec3 tDir = aNext - aPrev;
+  if(length(tDir) < 1e-6) tDir = aNext - aPos;
+  vTangent = normalize(mat3(uMV) * tDir);
+  vSide = aSide;
+  vT = aT;
+}`;
+
+// Cylindrical tube fragment shader
+const pipeFS=`#version 300 es
+precision highp float;
+in vec3 vViewPos, vTangent;
+in float vSide, vT;
+uniform float uColorOff;
+out vec4 fc;
+
+const float PI = 3.14159265;
+
+vec3 hsl(float h,float s,float l){
+  float c=(1.0-abs(2.0*l-1.0))*s, x=c*(1.0-abs(mod(h*6.0,2.0)-1.0)), m=l-c*0.5;
+  vec3 r; float hh=h*6.0;
+  if(hh<1.0)r=vec3(c,x,0);else if(hh<2.0)r=vec3(x,c,0);else if(hh<3.0)r=vec3(0,c,x);
+  else if(hh<4.0)r=vec3(0,x,c);else if(hh<5.0)r=vec3(x,0,c);else r=vec3(c,0,x);
+  return r+m;
+}
+
+void main(){
+  vec3 T = normalize(vTangent);
+  vec3 V = normalize(-vViewPos);
+
+  // Build perpendicular frame
+  vec3 right = cross(T, V);
+  float rl = length(right);
+  if(rl < 0.001){ right = cross(T, vec3(0,1,0)); if(length(right)<0.001) right = cross(T, vec3(1,0,0)); }
+  right = normalize(right);
+  vec3 up = normalize(cross(right, T));
+
+  // Virtual cylinder normal
+  float angle = vSide * PI * 0.5;
+  vec3 N = cos(angle) * right + sin(angle) * up;
+
+  // Two-light Blinn-Phong
+  vec3 L1 = normalize(vec3(3,4,2)), L2 = normalize(vec3(-2,-1,3));
+  float d1 = max(dot(N,L1),0.0), d2 = max(dot(N,L2),0.0);
+  vec3 H1 = normalize(L1+V), H2 = normalize(L2+V);
+  float s1 = pow(max(dot(N,H1),0.0),80.0), s2 = pow(max(dot(N,H2),0.0),40.0);
+
+  vec3 base = hsl(fract(vT*1.8+uColorOff), 0.7, 0.55);
+  float rim = smoothstep(0.3,1.0, 1.0-max(dot(N,V),0.0));
+
+  vec3 col = 0.1*base + base*(d1*0.85+d2*0.35) + vec3(1)*(s1*0.6+s2*0.2) + vec3(0.35,0.55,1.0)*rim*0.4;
+  col = col/(col+0.85);
+  col = pow(col, vec3(1.0/2.2));
+  fc = vec4(col, 1.0);
+}`;
+
+// Wireframe fragment shader (flat cyan)
+const wireFS=`#version 300 es
+precision highp float;
+uniform vec3 uColor;
+uniform float uAlpha;
+out vec4 fc;
+void main(){ fc = vec4(uColor, uAlpha); }`;
+
+// Simple flat-lit shader (for spheres)
+const flatVS=`#version 300 es
+precision highp float;
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aNorm;
+uniform mat4 uMVP, uMV;
+uniform mat3 uN;
+out vec3 vN, vP;
+void main(){ vec4 mv=uMV*vec4(aPos,1); vP=mv.xyz; vN=normalize(uN*aNorm); gl_Position=uMVP*vec4(aPos,1); }`;
+const flatFS=`#version 300 es
+precision highp float;
+in vec3 vN, vP;
+uniform vec3 uColor;
+out vec4 fc;
+void main(){ vec3 N=normalize(vN),V=normalize(-vP),L=normalize(vec3(3,4,2));float d=max(dot(N,L),0.0);vec3 H=normalize(L+V);float s=pow(max(dot(N,H),0.0),32.0);vec3 c=0.15*uColor+uColor*d*0.75+vec3(1)*s*0.3;fc=vec4(c,1);}`;
+
+// Thin line shader (control polygon)
+const lineVS=`#version 300 es
+precision highp float;
+layout(location=0) in vec3 aPos;
+uniform mat4 uMVP;
+void main(){ gl_Position=uMVP*vec4(aPos,1); }`;
+const lineFS=`#version 300 es
+precision highp float;
+uniform vec3 uColor;
+out vec4 fc;
+void main(){ fc=vec4(uColor,0.5); }`;
+
+function mkProg(vs,fs){
+  const p=gl.createProgram(),
+  comp=(s,t)=>{const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);
+    if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))console.error(gl.getShaderInfoLog(sh));return sh;};
+  gl.attachShader(p,comp(vs,gl.VERTEX_SHADER));
+  gl.attachShader(p,comp(fs,gl.FRAGMENT_SHADER));
+  gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS))console.error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+const pipeProg=mkProg(pipeVS,pipeFS);
+const wireProg=mkProg(pipeVS,wireFS);  // same VS, flat FS
+const flatProg=mkProg(flatVS,flatFS);
+const lineProg=mkProg(lineVS,lineFS);
+
+gl.enable(gl.DEPTH_TEST);
+gl.enable(gl.BLEND);
+gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+gl.clearColor(0.05,0.065,0.09,1);
+
+// ══════════════════════════════════════════
+//  BUFFER HELPERS
+// ══════════════════════════════════════════
+
+function createWideLineVAO(data){
+  // Helper to set up one VAO with the wide-line attributes
+  function setupVAO(idxArray){
+    const vao=gl.createVertexArray();
+    gl.bindVertexArray(vao);
+    // loc 0: pos
+    const pb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,pb);
+    gl.bufferData(gl.ARRAY_BUFFER,data.pos,gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+    // loc 1: prev
+    const prb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,prb);
+    gl.bufferData(gl.ARRAY_BUFFER,data.prev,gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(1);gl.vertexAttribPointer(1,3,gl.FLOAT,false,0,0);
+    // loc 2: next
+    const nxb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,nxb);
+    gl.bufferData(gl.ARRAY_BUFFER,data.next,gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(2);gl.vertexAttribPointer(2,3,gl.FLOAT,false,0,0);
+    // loc 3: side
+    const sb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,sb);
+    gl.bufferData(gl.ARRAY_BUFFER,data.side,gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(3);gl.vertexAttribPointer(3,1,gl.FLOAT,false,0,0);
+    // loc 4: t
+    const tb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,tb);
+    gl.bufferData(gl.ARRAY_BUFFER,data.tParam,gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(4);gl.vertexAttribPointer(4,1,gl.FLOAT,false,0,0);
+    // indices
+    const ib=gl.createBuffer();gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,idxArray,gl.STATIC_DRAW);
+    gl.bindVertexArray(null);
+    return{vao,count:idxArray.length};
+  }
+  const solid=setupVAO(data.triIdx);
+  const wire=setupVAO(data.wireIdx);
+  return{solidVao:solid.vao,triCount:solid.count,wireVao:wire.vao,wireCount:wire.count};
+}
+
+function createLineVAO(points){
+  const f=[];for(const p of points)f.push(p[0],p[1],p[2]);
+  const vao=gl.createVertexArray();gl.bindVertexArray(vao);
+  const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(f),gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+  gl.bindVertexArray(null);return{vao,count:points.length};
+}
+
+// Sphere for control points
+function buildSphere(r,sl,st){
+  const v=[],n=[],idx=[];
+  for(let i=0;i<=st;i++){const ph=Math.PI*i/st,sp=Math.sin(ph),cp=Math.cos(ph);
+    for(let j=0;j<=sl;j++){const th=2*Math.PI*j/sl,sn=Math.sin(th),cn=Math.cos(th);
+      const nx=sp*cn,ny=cp,nz=sp*sn;v.push(r*nx,r*ny,r*nz);n.push(nx,ny,nz);}}
+  for(let i=0;i<st;i++)for(let j=0;j<sl;j++){const a=i*(sl+1)+j,b=a+sl+1;idx.push(a,b,a+1,b,b+1,a+1);}
+  return{verts:new Float32Array(v),normals:new Float32Array(n),indices:new Uint16Array(idx)};
+}
+function createSphereVAO(mesh){
+  const vao=gl.createVertexArray();gl.bindVertexArray(vao);
+  const pb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,pb);gl.bufferData(gl.ARRAY_BUFFER,mesh.verts,gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+  const nb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,nb);gl.bufferData(gl.ARRAY_BUFFER,mesh.normals,gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(1);gl.vertexAttribPointer(1,3,gl.FLOAT,false,0,0);
+  const ib=gl.createBuffer();gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,mesh.indices,gl.STATIC_DRAW);
+  gl.bindVertexArray(null);return{vao,count:mesh.indices.length};
+}
+const sphereGeo=createSphereVAO(buildSphere(0.025,8,6));
+
+// ══════════════════════════════════════════
+//  SCENE
+// ══════════════════════════════════════════
+let pipeObjs=[], lineObjs=[], pointPos=[];
+
+function rebuildScene(){
+  for(const p of pipeObjs){gl.deleteVertexArray(p.solidVao);gl.deleteVertexArray(p.wireVao);}
+  for(const l of lineObjs) gl.deleteVertexArray(l.vao);
+  pipeObjs=[];lineObjs=[];
+
+  const type=document.getElementById('splineType').value;
+  const preset=document.getElementById('preset').value;
+  const cpC=+document.getElementById('cpCount').value;
+  const sdv=+document.getElementById('subdivs').value;
+  document.getElementById('cpVal').textContent=cpC;
+  document.getElementById('pwVal').textContent=document.getElementById('pipeW').value;
+  document.getElementById('subVal').textContent=sdv;
+
+  let csets=[];const closed=preset!=='random';
+  if(preset==='torusknot')csets=[genTK(cpC,3,2)];
+  else if(preset==='torusknot54')csets=[genTK(cpC,5,4)];
+  else if(preset==='trefoil')csets=[genTref(cpC)];
+  else if(preset==='helix')csets=genHelix(cpC);
+  else if(preset==='lissajous')csets=[genLiss(cpC)];
+  else csets=[genRand(cpC)];
+  if(!Array.isArray(csets[0][0]))csets=[csets];
+
+  pointPos=[];
+  for(let s=0;s<csets.length;s++){
+    const cp=csets[s]; pointPos.push(...cp);
+    const curve=evalSpline(cp,sdv,type,closed);
+    if(curve.length<2)continue;
+    const wl=buildWideLine(curve);
+    const obj=createWideLineVAO(wl);
+    obj.colorOff=s*0.4;
+    pipeObjs.push(obj);
+    lineObjs.push(createLineVAO(closed?[...cp,cp[0]]:cp));
+  }
+}
+rebuildScene();
+
+['splineType','preset','cpCount','pipeW','subdivs'].forEach(id=>
+  document.getElementById(id).addEventListener('input',()=>{
+    document.getElementById('pwVal').textContent=document.getElementById('pipeW').value;
+    if(id!=='pipeW') rebuildScene(); // width change doesn't need rebuild
+  }));
+document.getElementById('regen').addEventListener('click',()=>{document.getElementById('preset').value='random';rebuildScene();});
+
+// ── Camera ──
+let cTh=0.5,cPh=0.4,cD=3.5,drag=false,lx,ly;
+canvas.addEventListener('pointerdown',e=>{drag=true;lx=e.clientX;ly=e.clientY;canvas.setPointerCapture(e.pointerId);});
+canvas.addEventListener('pointerup',()=>{drag=false;});
+canvas.addEventListener('pointermove',e=>{if(!drag)return;cTh-=(e.clientX-lx)*.008;cPh=clamp(cPh+(e.clientY-ly)*.008,-Math.PI/2+.1,Math.PI/2-.1);lx=e.clientX;ly=e.clientY;});
+canvas.addEventListener('wheel',e=>{cD=clamp(cD+e.deltaY*.003,.5,15);e.preventDefault();},{passive:false});
+
+// ══════════════════════════════════════════
+//  RENDER LOOP
+// ══════════════════════════════════════════
+function frame(){
+  resize();
+  if(document.getElementById('autoRot').checked) cTh+=.003;
+
+  const asp=canvas.width/canvas.height;
+  const proj=mat4Persp(Math.PI/4.5,asp,0.01,50);
+  const eye=[cD*Math.cos(cPh)*Math.sin(cTh),cD*Math.sin(cPh),cD*Math.cos(cPh)*Math.cos(cTh)];
+  const view=mat4LookAt(eye,[0,0,0],[0,1,0]);
+  const vp=mat4Mul(proj,view);
+  const nm=mat3Norm(view);
+  const pipeW=+document.getElementById('pipeW').value;
+  const showW=document.getElementById('showWire').checked;
+
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+
+  // ── Pass 1: Solid wide-line tubes ──
+  if(showW){gl.enable(gl.POLYGON_OFFSET_FILL);gl.polygonOffset(1,1);}
+
+  gl.useProgram(pipeProg);
+  gl.uniformMatrix4fv(gl.getUniformLocation(pipeProg,'uMVP'),false,vp);
+  gl.uniformMatrix4fv(gl.getUniformLocation(pipeProg,'uMV'),false,view);
+  gl.uniform1f(gl.getUniformLocation(pipeProg,'uWidth'),pipeW);
+  gl.uniform1f(gl.getUniformLocation(pipeProg,'uAspect'),asp);
+  gl.uniform2f(gl.getUniformLocation(pipeProg,'uRes'),canvas.width,canvas.height);
+
+  for(const p of pipeObjs){
+    gl.uniform1f(gl.getUniformLocation(pipeProg,'uColorOff'),p.colorOff||0);
+    gl.bindVertexArray(p.solidVao);
+    gl.drawElements(gl.TRIANGLES,p.triCount,gl.UNSIGNED_INT,0);
+  }
+
+  if(showW) gl.disable(gl.POLYGON_OFFSET_FILL);
+
+  // ── Pass 2: Strip wireframe overlay ──
+  if(showW){
+    gl.useProgram(wireProg);
+    gl.uniformMatrix4fv(gl.getUniformLocation(wireProg,'uMVP'),false,vp);
+    gl.uniformMatrix4fv(gl.getUniformLocation(wireProg,'uMV'),false,view);
+    gl.uniform1f(gl.getUniformLocation(wireProg,'uWidth'),pipeW);
+    gl.uniform1f(gl.getUniformLocation(wireProg,'uAspect'),asp);
+    gl.uniform2f(gl.getUniformLocation(wireProg,'uRes'),canvas.width,canvas.height);
+    gl.uniform3f(gl.getUniformLocation(wireProg,'uColor'),0.15,0.95,1.0);
+    gl.uniform1f(gl.getUniformLocation(wireProg,'uAlpha'),0.7);
+
+    for(const p of pipeObjs){
+      gl.uniform1f(gl.getUniformLocation(wireProg,'uColorOff'),p.colorOff||0);
+      gl.bindVertexArray(p.wireVao);
+      gl.drawElements(gl.LINES,p.wireCount,gl.UNSIGNED_INT,0);
+    }
+  }
+
+  // ── Control polygon ──
+  if(document.getElementById('showCP').checked){
+    gl.useProgram(lineProg);
+    gl.uniform3f(gl.getUniformLocation(lineProg,'uColor'),.4,.5,.6);
+    for(const l of lineObjs){
+      gl.uniformMatrix4fv(gl.getUniformLocation(lineProg,'uMVP'),false,vp);
+      gl.bindVertexArray(l.vao);
+      gl.drawArrays(gl.LINE_STRIP,0,l.count);
+    }
+  }
+
+  // ── Control point spheres ──
+  if(document.getElementById('showPts').checked){
+    gl.useProgram(flatProg);
+    for(const pt of pointPos){
+      const md=mat4Trans(pt[0],pt[1],pt[2]);
+      const mv=mat4Mul(view,md);
+      const mvp=mat4Mul(proj,mv);
+      const sn=mat3Norm(mv);
+      gl.uniformMatrix4fv(gl.getUniformLocation(flatProg,'uMVP'),false,mvp);
+      gl.uniformMatrix4fv(gl.getUniformLocation(flatProg,'uMV'),false,mv);
+      gl.uniformMatrix3fv(gl.getUniformLocation(flatProg,'uN'),false,sn);
+      gl.uniform3f(gl.getUniformLocation(flatProg,'uColor'),1,.85,.3);
+      gl.bindVertexArray(sphereGeo.vao);
+      gl.drawElements(gl.TRIANGLES,sphereGeo.count,gl.UNSIGNED_SHORT,0);
+    }
+  }
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
